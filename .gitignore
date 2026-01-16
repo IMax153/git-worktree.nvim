@@ -1,0 +1,14 @@
+# direnv / nix
+.direnv/
+
+# Neovim
+doc/tags
+
+# Lua
+luac.out
+
+# OS
+.DS_Store
+
+# Editor state
+.opencode/state/

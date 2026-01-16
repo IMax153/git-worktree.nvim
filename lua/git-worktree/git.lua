@@ -31,7 +31,7 @@ end
 function M.worktree_add(path, branch, opts)
   opts = opts or {}
   local args = { "worktree", "add" }
-  
+
   if opts.create_branch then
     table.insert(args, "-b")
     table.insert(args, branch)
@@ -40,7 +40,7 @@ function M.worktree_add(path, branch, opts)
     table.insert(args, path)
     table.insert(args, branch)
   end
-  
+
   local result = exec(args)
   if result.code ~= 0 then
     return false, result.stderr or "Failed to add worktree"
@@ -55,13 +55,13 @@ end
 function M.worktree_remove(path, opts)
   opts = opts or {}
   local args = { "worktree", "remove" }
-  
+
   if opts.force then
     table.insert(args, "--force")
   end
-  
+
   table.insert(args, path)
-  
+
   local result = exec(args)
   if result.code ~= 0 then
     return false, result.stderr or "Failed to remove worktree"

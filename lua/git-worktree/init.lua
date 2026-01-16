@@ -1,8 +1,8 @@
 ---@class GitWorktree
 local M = {}
 
-local config = require('git-worktree.config')
-local worktree = require('git-worktree.worktree')
+local config = require("git-worktree.config")
+local worktree = require("git-worktree.worktree")
 
 ---Setup function (optional - plugin works without it)
 ---@param opts? GitWorktreeConfig

@@ -1,0 +1,516 @@
+#!/bin/bash
+
+# Ralph Auto Loop - Autonomous AI coding agent that implements specs
+#
+# This script automatically implements everything in the specs/ directory:
+# 1. Read all actionable specs from specs/ folder
+# 2. Read context from context/ folder for best practices
+# 3. Select a high priority task from the specs
+# 4. Implement it
+# 5. Update the spec (mark issues resolved, etc.)
+# 6. Repeat until all specs are fully implemented
+#
+# Usage: ./scripts/ralph-auto.sh
+#
+# The loop continues until OpenCode outputs "NOTHING_LEFT_TO_DO"
+# COMMITS ARE HANDLED BY THIS SCRIPT, NOT THE AGENT.
+
+set -e
+set -o pipefail  # Propagate exit status through pipelines (important for tee)
+
+# Configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROGRESS_FILE="${SCRIPT_DIR}/progress-auto.txt"
+PROMPT_TEMPLATE="${SCRIPT_DIR}/RALPH_AUTO_PROMPT.md"
+COMPLETE_MARKER="NOTHING_LEFT_TO_DO"
+OUTPUT_DIR=".ralph-auto"
+AGENT_CMD="opencode run --model anthropic/claude-opus-4-5 --format json"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Cleanup function - removes output directory on exit
+cleanup() {
+    if [ -d "${OUTPUT_DIR}" ]; then
+        rm -rf "${OUTPUT_DIR}"
+        echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} Cleaned up ${OUTPUT_DIR}"
+    fi
+}
+
+# Set trap to clean up on exit (normal exit, errors, or signals)
+trap cleanup EXIT
+
+# Create output directory for logs
+mkdir -p "${OUTPUT_DIR}"
+
+# Logging function
+log() {
+    local level="${1}"
+    shift
+    local message="$@"
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+
+    case "${level}" in
+        "INFO")  echo -e "${BLUE}[${timestamp}]${NC} ${message}" ;;
+        "SUCCESS") echo -e "${GREEN}[${timestamp}]${NC} ${message}" ;;
+        "WARN")  echo -e "${YELLOW}[${timestamp}]${NC} ${message}" ;;
+        "ERROR") echo -e "${RED}[${timestamp}]${NC} ${message}" ;;
+    esac
+
+    echo "[${timestamp}] [${level}] ${message}" >> "${OUTPUT_DIR}/ralph-auto.log"
+}
+
+# Check prerequisites
+check_prerequisites() {
+    log "INFO" "Checking prerequisites..."
+
+    if ! command -v opencode &> /dev/null; then
+        log "ERROR" "opencode is not installed or not in PATH"
+        exit 1
+    fi
+
+    # Check if nix is available
+    if ! command -v nix &> /dev/null; then
+        log "ERROR" "Nix is not installed or not in PATH"
+        exit 1
+    fi
+
+    # Check if we're in a git repo
+    if ! git rev-parse --git-dir > /dev/null 2>&1; then
+        log "ERROR" "Not in a git repository"
+        exit 1
+    fi
+
+    # Check for specs directory with at least one .md file
+    if [ ! -d "specs" ]; then
+        log "ERROR" "specs/ directory not found"
+        exit 1
+    fi
+
+    local spec_count
+    spec_count=$(find specs -name "*.md" -type f | wc -l | tr -d ' ')
+    if [ "${spec_count}" -eq 0 ]; then
+        log "ERROR" "No .md files found in specs/ directory"
+        exit 1
+    fi
+
+    log "INFO" "Found ${spec_count} actionable spec(s) in specs/"
+
+    # Check for prompt template
+    if [ ! -f "${PROMPT_TEMPLATE}" ]; then
+        log "ERROR" "${PROMPT_TEMPLATE} not found"
+        exit 1
+    fi
+
+    # Check for context directory (optional but recommended)
+    if [ ! -d "context" ]; then
+        log "WARN" "context/ directory not found - context documentation unavailable"
+    fi
+
+    # Create progress file if it doesn't exist
+    if [ ! -f "${PROGRESS_FILE}" ]; then
+        echo "# Ralph Auto Progress Log" > "${PROGRESS_FILE}"
+        echo "# This file tracks autonomous task completions" >> "${PROGRESS_FILE}"
+        echo "" >> "${PROGRESS_FILE}"
+    fi
+
+    log "SUCCESS" "Prerequisites check passed"
+}
+
+# Check if there are uncommitted changes
+has_changes() {
+    ! git diff --quiet || ! git diff --cached --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]
+}
+
+# Filter stream-json output to show only relevant content
+stream_filter() {
+    while IFS= read -r line; do
+        # Extract assistant text messages
+        if echo "${line}" | jq -e '.type == "assistant"' > /dev/null 2>&1; then
+            local text
+            text=$(echo "${line}" | jq -r '.message.content[]? | select(.type == "text") | .text // empty' 2>/dev/null)
+            if [ -n "${text}" ]; then
+                echo "${text}"
+            fi
+
+            # Show tool calls with details
+            local tool_info
+            tool_info=$(echo "${line}" | jq -r '
+                .message.content[]? | select(.type == "tool_use") |
+                .name as $name |
+                if $name == "Read" then
+                    "> Read: \(.input.file_path // "?")"
+                elif $name == "Write" then
+                    "> Write: \(.input.file_path // "?")"
+                elif $name == "Edit" then
+                    "> Edit: \(.input.file_path // "?")"
+                elif $name == "Glob" then
+                    "> Glob: \(.input.pattern // "?")"
+                elif $name == "Grep" then
+                    "> Grep: \(.input.pattern // "?") in \(.input.path // ".")"
+                elif $name == "Bash" then
+                    "> Bash: \(.input.command // "?" | .[0:80])"
+                elif $name == "Task" then
+                    "> Task: \(.input.description // "?")"
+                else
+                    "> \($name): \(.input | tostring | .[0:60])"
+                end
+            ' 2>/dev/null)
+            if [ -n "${tool_info}" ]; then
+                echo -e "${BLUE}${tool_info}${NC}"
+            fi
+        fi
+
+        # Show final result
+        if echo "${line}" | jq -e '.type == "result"' > /dev/null 2>&1; then
+            local result
+            result=$(echo "${line}" | jq -r '.result // empty' 2>/dev/null)
+            if [ -n "${result}" ]; then
+                echo ""
+                echo "${result}"
+            fi
+        fi
+    done
+}
+
+# Run CI checks via nix dev shell
+run_ci_checks() {
+    log "INFO" "Running CI checks..."
+
+    local ci_failed=0
+    local error_output=""
+
+    echo "=========================================="
+    echo "Running CI Checks"
+    echo "=========================================="
+
+    # Linting with selene
+    echo ""
+    echo "1. Linting (selene)..."
+    echo "-----------------------"
+    local lint_output
+    if lint_output=$(nix develop --command selene lua/ 2>&1); then
+        echo -e "${GREEN}Selene passed${NC}"
+    else
+        echo -e "${RED}Selene failed${NC}"
+        ci_failed=1
+        error_output+="## Selene Failed
+
+Command: \`nix develop --command selene lua/\`
+
+\`\`\`
+${lint_output}
+\`\`\`
+
+"
+    fi
+
+    # Formatting check with stylua
+    echo ""
+    echo "2. Formatting (stylua)..."
+    echo "-------------------------"
+    local format_output
+    if format_output=$(nix develop --command stylua --check lua/ 2>&1); then
+        echo -e "${GREEN}Stylua check passed${NC}"
+    else
+        echo -e "${RED}Stylua check failed${NC}"
+        ci_failed=1
+        error_output+="## Stylua Check Failed
+
+Command: \`nix develop --command stylua --check lua/\`
+
+\`\`\`
+${format_output}
+\`\`\`
+
+"
+    fi
+
+    # Summary
+    echo ""
+    echo "=========================================="
+    if [ "${ci_failed}" -eq 0 ]; then
+        echo -e "${GREEN}All CI checks passed!${NC}"
+        log "SUCCESS" "CI checks passed"
+        return 0
+    else
+        echo -e "${RED}CI checks failed!${NC}"
+        log "ERROR" "CI checks failed"
+        # Save detailed errors for feedback to next iteration
+        cat > "${OUTPUT_DIR}/ci_errors.txt" << EOF
+# CI Check Failures
+
+The previous iteration failed CI checks. You MUST fix these errors before continuing.
+
+${error_output}
+EOF
+        return 1
+    fi
+}
+
+# Commit changes with auto-generated message
+commit_changes() {
+    local iteration="${1}"
+    local task_summary="${2}"
+
+    log "INFO" "Committing changes..."
+
+    # Stage all changes
+    git add -A
+
+    # Check if there are changes to commit
+    if git diff --cached --quiet; then
+        log "WARN" "No changes to commit"
+        return 0
+    fi
+
+    # Create commit message
+    local commit_msg="feat(auto): ${task_summary}
+
+Ralph-Auto-Iteration: ${iteration}
+
+Automated commit by Ralph Auto loop."
+
+    # Commit
+    if git commit -m "${commit_msg}"; then
+        log "SUCCESS" "Committed: ${task_summary}"
+        return 0
+    else
+        log "ERROR" "Commit failed"
+        return 1
+    fi
+}
+
+# Rollback uncommitted changes
+rollback_changes() {
+    log "WARN" "Rolling back uncommitted changes..."
+    git checkout -- .
+    git clean -fd
+}
+
+# Build the prompt for the agent
+build_prompt() {
+    local iteration="${1}"
+    local ci_errors=""
+    local progress_content=""
+
+    if [ -f "${OUTPUT_DIR}/ci_errors.txt" ]; then
+        ci_errors="## Previous Iteration Errors
+
+$(cat "${OUTPUT_DIR}/ci_errors.txt")
+"
+    fi
+
+    if [ -f "${PROGRESS_FILE}" ]; then
+        progress_content="## Progress So Far
+
+\`\`\`
+$(cat "${PROGRESS_FILE}")
+\`\`\`
+"
+    fi
+
+    # Get list of specs and context files
+    local specs_list
+    specs_list=$(find specs -name "*.md" -type f | sort | while read -r f; do echo "- \`${f}\`"; done)
+    local context_list=""
+    if [ -d "context" ]; then
+        context_list=$(find context -name "*.md" -type f | sort | while read -r f; do echo "- \`${f}\`"; done)
+    fi
+
+    # Read template and substitute placeholders
+    local prompt
+    prompt=$(cat "${PROMPT_TEMPLATE}")
+    prompt="${prompt//\{\{SPECS_LIST\}\}/${specs_list}}"
+    prompt="${prompt//\{\{CONTEXT_LIST\}\}/${context_list}}"
+    prompt="${prompt//\{\{ITERATION\}\}/${iteration}}"
+    prompt="${prompt//\{\{CI_ERRORS\}\}/${ci_errors}}"
+    prompt="${prompt//\{\{PROGRESS\}\}/${progress_content}}"
+
+    echo "${prompt}"
+}
+
+# Extract task description from output (handles stream-json format)
+extract_task_description() {
+    local output_file="${1}"
+    local desc=""
+
+    # The output file is in stream-json format (one JSON object per line)
+    # Extract text content from assistant messages and find TASK_COMPLETE:
+    desc=$(cat "${output_file}" | \
+        jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text // empty' 2>/dev/null | \
+        grep "TASK_COMPLETE:" | \
+        head -1 | \
+        sed 's/.*TASK_COMPLETE:[[:space:]]*//')
+
+    # If we got something, return it; otherwise return default
+    if [ -n "${desc}" ]; then
+        echo "${desc}"
+    else
+        echo "Autonomous improvements"
+    fi
+}
+
+# Run a single iteration of the agent
+run_iteration() {
+    local iteration="${1}"
+    local output_file="${OUTPUT_DIR}/iteration_${iteration}_output.txt"
+
+    log "INFO" "Starting iteration ${iteration}"
+
+    # Build the prompt
+    local prompt
+    prompt=$(build_prompt "${iteration}")
+
+    # Save prompt for debugging
+    local prompt_file="${OUTPUT_DIR}/iteration_${iteration}_prompt.md"
+    echo "${prompt}" > "${prompt_file}"
+
+    # Run the agent
+    log "INFO" "Running OpenCode agent..."
+    echo ""  # Blank line before agent output
+
+    # Run agent with JSON output, filter for readability
+    if cat "${prompt_file}" | ${AGENT_CMD} 2>&1 | tee "${output_file}" | stream_filter; then
+        echo ""  # Blank line after agent output
+        log "SUCCESS" "Agent completed iteration ${iteration}"
+    else
+        echo ""
+        log "WARN" "Agent exited with non-zero status"
+    fi
+
+    # Extract only assistant text content from stream-json (excludes prompt)
+    local assistant_text
+    assistant_text=$(cat "${output_file}" | \
+        jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text // empty' 2>/dev/null)
+
+    # Check if agent signaled nothing left to do (only in assistant output, not prompt)
+    if echo "${assistant_text}" | grep -q "${COMPLETE_MARKER}"; then
+        log "SUCCESS" "Agent signaled NOTHING_LEFT_TO_DO"
+        return 0
+    fi
+
+    # Check if agent signaled task completion (only in assistant output, not prompt)
+    if echo "${assistant_text}" | grep -q "TASK_COMPLETE"; then
+        log "INFO" "Agent signaled task completion"
+
+        local task_desc
+        task_desc=$(extract_task_description "${output_file}")
+
+        # Run CI checks before committing
+        if run_ci_checks; then
+            # Update progress log BEFORE committing so it's included
+            echo "" >> "${PROGRESS_FILE}"
+            echo "## Iteration ${iteration} - $(date '+%Y-%m-%d %H:%M')" >> "${PROGRESS_FILE}"
+            echo "**Task**: ${task_desc}" >> "${PROGRESS_FILE}"
+            echo "**Status**: complete" >> "${PROGRESS_FILE}"
+            echo "---" >> "${PROGRESS_FILE}"
+
+            # Clear CI errors on success
+            rm -f "${OUTPUT_DIR}/ci_errors.txt"
+
+            # Commit the changes
+            if commit_changes "${iteration}" "${task_desc}"; then
+                log "SUCCESS" "Task completed and committed: ${task_desc}"
+            else
+                log "ERROR" "Failed to commit changes"
+                rollback_changes
+                return 1
+            fi
+        else
+            log "WARN" "CI checks failed - keeping changes for next iteration to fix"
+            # Don't rollback - keep changes so next iteration can fix CI errors
+        fi
+    else
+        log "WARN" "Agent did not complete a task"
+        # Check if there are changes anyway
+        if has_changes; then
+            log "INFO" "Found uncommitted changes, running CI checks..."
+            if run_ci_checks; then
+                echo "" >> "${PROGRESS_FILE}"
+                echo "## Iteration ${iteration} - $(date '+%Y-%m-%d %H:%M')" >> "${PROGRESS_FILE}"
+                echo "**Task**: Partial work (no explicit completion signal)" >> "${PROGRESS_FILE}"
+                echo "---" >> "${PROGRESS_FILE}"
+
+                rm -f "${OUTPUT_DIR}/ci_errors.txt"
+
+                if commit_changes "${iteration}" "Partial work from iteration ${iteration}"; then
+                    log "SUCCESS" "Partial work committed"
+                fi
+            fi
+        fi
+    fi
+
+    return 1
+}
+
+# Main loop
+main() {
+    log "INFO" "=========================================="
+    log "INFO" "Starting Ralph Auto Loop"
+    log "INFO" "=========================================="
+
+    check_prerequisites
+
+    local start_time
+    start_time=$(date +%s)
+    local iteration=1
+    local completed=false
+
+    # Run initial CI checks before first iteration
+    # This ensures the agent knows about any pre-existing errors
+    log "INFO" "Running initial CI checks..."
+    if ! run_ci_checks; then
+        log "WARN" "Initial CI checks failed - errors will be included in prompt for agent to fix"
+    else
+        log "SUCCESS" "Initial CI checks passed - starting with clean slate"
+        # Clear any stale error file
+        rm -f "${OUTPUT_DIR}/ci_errors.txt"
+    fi
+
+    while true; do
+        log "INFO" "------------------------------------------"
+        log "INFO" "ITERATION ${iteration}"
+        log "INFO" "------------------------------------------"
+
+        # Run the agent
+        if run_iteration "${iteration}"; then
+            log "SUCCESS" "Nothing left to do!"
+            completed=true
+            break
+        fi
+
+        # Small delay between iterations
+        sleep 2
+
+        ((iteration++))
+    done
+
+    local end_time
+    end_time=$(date +%s)
+    local duration=$((end_time - start_time))
+
+    log "INFO" "=========================================="
+    log "INFO" "Ralph Auto Loop Complete"
+    log "INFO" "Total iterations: ${iteration}"
+    log "INFO" "Duration: ${duration}s"
+
+    if [ "${completed}" = true ]; then
+        log "SUCCESS" "All work completed successfully!"
+    fi
+    log "INFO" "=========================================="
+
+    # Show git log of Ralph Auto commits
+    log "INFO" "Recent Ralph Auto commits:"
+    git log --oneline -10 --grep="Ralph-Auto" || true
+
+    exit 0
+}
+
+# Run main
+main
