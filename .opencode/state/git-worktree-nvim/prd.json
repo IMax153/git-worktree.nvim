@@ -1,0 +1,272 @@
+{
+  "prdName": "git-worktree-nvim",
+  "tasks": [
+    {
+      "id": "setup-1",
+      "category": "setup",
+      "description": "Plugin directory structure and entry point",
+      "steps": [
+        "lua/git-worktree/init.lua exists with setup() function",
+        "lua/git-worktree/config.lua exists with defaults",
+        "lua/git-worktree/types.lua exists with LuaCATS annotations",
+        "plugin/git-worktree.lua exists and registers :Worktree command",
+        "require('git-worktree') loads without error"
+      ],
+      "passes": true
+    },
+    {
+      "id": "git-1",
+      "category": "git",
+      "description": "Git command wrapper module",
+      "steps": [
+        "lua/git-worktree/git.lua exists",
+        "git.worktree_list() runs `git worktree list --porcelain` and returns stdout",
+        "git.worktree_add(path, branch, opts) runs `git worktree add` with correct args",
+        "git.worktree_remove(path, opts) runs `git worktree remove` with correct args",
+        "git.is_dirty(path) runs `git -C <path> status --porcelain` and returns boolean",
+        "git.get_git_root() returns git repository root path",
+        "All commands use vim.system() for async execution",
+        "All commands check exit codes and return errors on failure"
+      ],
+      "passes": false
+    },
+    {
+      "id": "core-1",
+      "category": "core",
+      "description": "Worktree parsing and list() API",
+      "steps": [
+        "lua/git-worktree/worktree.lua exists with parse function",
+        "Parses `git worktree list --porcelain` output into Worktree objects",
+        "Worktree object has: path, head, branch, is_bare, is_current, is_locked, is_prunable, is_detached",
+        "Handles detached HEAD (branch is nil, is_detached is true)",
+        "Handles bare repo entry (is_bare is true)",
+        "Handles locked worktrees (is_locked is true)",
+        "require('git-worktree').list() returns array of Worktree objects",
+        "is_current is true for worktree matching vim.fn.getcwd()"
+      ],
+      "passes": false
+    },
+    {
+      "id": "core-2",
+      "category": "core",
+      "description": "create() API for new worktrees",
+      "steps": [
+        "require('git-worktree').create({ branch = 'x' }) creates worktree from existing branch",
+        "require('git-worktree').create({ branch = 'x', create_branch = true }) creates new branch",
+        "Prompts for path via vim.ui.input() if not provided",
+        "Default path is ../<branch-name> relative to git root",
+        "Returns Worktree object on success",
+        "Returns nil, error_string on failure",
+        "Calls on_create hook if configured",
+        "Switches to new worktree by default (switch = true)"
+      ],
+      "passes": false
+    },
+    {
+      "id": "core-3",
+      "category": "core",
+      "description": "Buffer management module",
+      "steps": [
+        "lua/git-worktree/buffer.lua exists",
+        "buffer.save_all() saves all modified buffers",
+        "buffer.repoint(old_root, new_root) updates buffer paths from old to new worktree",
+        "Repointing only affects normal file buffers (not terminals, special buffers)",
+        "Buffers for files that don't exist in new worktree are closed with notification",
+        "Paths are canonicalized with vim.fn.resolve() to handle symlinks"
+      ],
+      "passes": false
+    },
+    {
+      "id": "core-4",
+      "category": "core",
+      "description": "switch() API for changing worktrees",
+      "steps": [
+        "require('git-worktree').switch(path) switches to worktree at path",
+        "Auto-saves all modified buffers before switch",
+        "Changes cwd to target worktree via vim.fn.chdir()",
+        "Repoints all buffers to new worktree paths",
+        "Restarts LSP clients after switch",
+        "Emits User GitWorktreeSwitched autocmd event",
+        "Calls on_switch hook with old and new worktree",
+        "Returns true on success, false + error on failure",
+        "Errors if path is not a valid worktree"
+      ],
+      "passes": false
+    },
+    {
+      "id": "core-5",
+      "category": "core",
+      "description": "delete() API for removing worktrees",
+      "steps": [
+        "require('git-worktree').delete(path) removes worktree",
+        "require('git-worktree').delete(path, { force = true }) removes dirty worktree",
+        "Returns true on success, nil + error on failure",
+        "Prevents deleting current worktree (returns error)",
+        "Prevents deleting main worktree (returns error)",
+        "Calls on_delete hook if configured"
+      ],
+      "passes": false
+    },
+    {
+      "id": "cmd-1",
+      "category": "command",
+      "description": ":Worktree list subcommand",
+      "steps": [
+        ":Worktree list prints all worktrees",
+        "Output shows path, branch, and current indicator",
+        "Output is formatted for readability"
+      ],
+      "passes": false
+    },
+    {
+      "id": "cmd-2",
+      "category": "command",
+      "description": ":Worktree create subcommand",
+      "steps": [
+        ":Worktree create <branch> creates worktree from existing branch",
+        ":Worktree create <branch> <path> creates at specific path",
+        ":Worktree create (no args) prompts for branch and path",
+        "Prompts use vim.ui.input()"
+      ],
+      "passes": false
+    },
+    {
+      "id": "cmd-3",
+      "category": "command",
+      "description": ":Worktree switch subcommand",
+      "steps": [
+        ":Worktree switch <path> switches to worktree",
+        "Tab completion suggests existing worktree paths"
+      ],
+      "passes": false
+    },
+    {
+      "id": "cmd-4",
+      "category": "command",
+      "description": ":Worktree delete subcommand",
+      "steps": [
+        ":Worktree delete <path> removes worktree",
+        "Tab completion suggests existing worktree paths",
+        "Errors clearly if worktree is dirty (suggests --force)"
+      ],
+      "passes": false
+    },
+    {
+      "id": "cmd-5",
+      "category": "command",
+      "description": ":Worktree command completion",
+      "steps": [
+        "Tab completion for subcommands (list, create, switch, delete, pick)",
+        "Tab completion for paths after switch/delete subcommands",
+        "Completion registered via nvim_create_user_command complete option"
+      ],
+      "passes": false
+    },
+    {
+      "id": "snacks-1",
+      "category": "snacks",
+      "description": "Snacks picker integration",
+      "steps": [
+        "lua/git-worktree/snacks.lua exists",
+        "require('git-worktree.snacks').worktrees() opens Snacks picker",
+        "Picker shows current worktree indicator",
+        "Picker shows branch name",
+        "Picker shows path",
+        "Picker shows dirty state indicator",
+        "Dirty state is fetched for all worktrees",
+        "<CR> switches to selected worktree",
+        "Gracefully errors with vim.notify if Snacks not installed"
+      ],
+      "passes": false
+    },
+    {
+      "id": "snacks-2",
+      "category": "snacks",
+      "description": "Snacks picker create action",
+      "steps": [
+        "<C-n> in picker prompts for branch name",
+        "After branch, prompts for path (defaults to ../<branch>)",
+        "Creates worktree and switches to it",
+        "Picker refreshes or closes after creation"
+      ],
+      "passes": false
+    },
+    {
+      "id": "snacks-3",
+      "category": "snacks",
+      "description": "Snacks picker delete action",
+      "steps": [
+        "<C-d> in picker deletes selected worktree",
+        "Shows confirmation before delete",
+        "Cannot delete current worktree (shows error)",
+        "Picker refreshes after deletion"
+      ],
+      "passes": false
+    },
+    {
+      "id": "health-1",
+      "category": "health",
+      "description": ":checkhealth git-worktree",
+      "steps": [
+        "lua/git-worktree/health.lua exists",
+        ":checkhealth git-worktree runs without error",
+        "Checks Neovim version >= 0.11 (error if not)",
+        "Checks git executable exists (error if not)",
+        "Checks current directory is git repo (warn if not)",
+        "Checks Snacks.nvim availability (info, not error)"
+      ],
+      "passes": false
+    },
+    {
+      "id": "config-1",
+      "category": "config",
+      "description": "Configuration and hooks",
+      "steps": [
+        "setup() is optional - plugin works without it",
+        "setup({ hooks = { on_switch = fn } }) registers switch hook",
+        "setup({ hooks = { on_create = fn } }) registers create hook",
+        "setup({ hooks = { on_delete = fn } }) registers delete hook",
+        "Hooks receive Worktree objects as arguments",
+        "Config validation via vim.validate()"
+      ],
+      "passes": false
+    },
+    {
+      "id": "docs-1",
+      "category": "docs",
+      "description": "README documentation",
+      "steps": [
+        "README.md exists with installation instructions",
+        "README shows lazy.nvim config example",
+        "README documents all Lua API functions",
+        "README documents :Worktree commands",
+        "README documents configuration options"
+      ],
+      "passes": false
+    },
+    {
+      "id": "docs-2",
+      "category": "docs",
+      "description": "Vimdoc help file",
+      "steps": [
+        "doc/git-worktree.txt exists",
+        ":help git-worktree works",
+        "Documents all commands and API",
+        "Includes examples"
+      ],
+      "passes": false
+    }
+  ],
+  "context": {
+    "patterns": [],
+    "keyFiles": [],
+    "nonGoals": [
+      "Remote branch checkout",
+      "Auto-fetch before list",
+      "Telescope integration",
+      "Worktree templates",
+      "Session management",
+      "Branch management"
+    ]
+  }
+}

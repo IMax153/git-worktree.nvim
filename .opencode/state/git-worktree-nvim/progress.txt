@@ -1,0 +1,21 @@
+# Progress Log
+PRD: git-worktree-nvim
+Started: 2026-01-16
+
+## Codebase Patterns
+- **Module structure**: Each module returns a table M with public functions
+- **Type safety**: LuaCATS annotations in types.lua, @class and @param tags
+- **Config pattern**: config.setup() validates and deep extends defaults
+
+---
+<!-- Task logs below - APPEND ONLY -->
+
+## Task - setup-1
+- Created plugin directory structure: lua/git-worktree/, plugin/
+- Implemented lua/git-worktree/init.lua with setup() function that delegates to config
+- Implemented lua/git-worktree/config.lua with defaults, validation via vim.validate()
+- Implemented lua/git-worktree/types.lua with LuaCATS annotations for Worktree, hooks, options
+- Implemented plugin/git-worktree.lua registering :Worktree command
+- Verified require('git-worktree') loads without error via nvim --headless
+- Files changed: lua/git-worktree/{init,config,types}.lua, plugin/git-worktree.lua
+- **Learnings**: vim.tbl_deep_extend merges configs, vim.validate checks types at runtime
