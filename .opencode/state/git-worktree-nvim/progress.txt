@@ -55,3 +55,15 @@ Started: 2026-01-16
 - Tested: existing branch, create_branch=true, on_create hook
 - Files changed: lua/git-worktree/worktree.lua, lua/git-worktree/init.lua
 - **Learnings**: vim.ui.input() requires async callback pattern; pcall protects against missing dependencies during development; symlink resolution critical for macOS /tmp paths
+
+## Task - core-3
+- Verified lua/git-worktree/buffer.lua already implemented with save_all() and repoint() functions
+- save_all() iterates through all buffers, saves only modified normal file buffers (buftype=='')
+- Uses vim.api.nvim_get_option_value() to check modifiable and modified state
+- repoint(old_root, new_root) canonicalizes paths with vim.fn.resolve() to handle symlinks
+- Filters buffers by buftype to skip terminals, quickfix, help, etc
+- Calculates relative paths and reconstructs absolute paths in new worktree
+- Checks vim.fn.filereadable() before repointing; closes buffers for missing files
+- Notifies user when closing buffers for files not in new worktree
+- Files: lua/git-worktree/buffer.lua
+- **Learnings**: nvim_get_option_value() preferred over deprecated buf_get_option; vim.startswith() cleaner for path prefix checks

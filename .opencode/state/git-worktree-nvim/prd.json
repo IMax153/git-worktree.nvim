@@ -74,7 +74,7 @@
         "Buffers for files that don't exist in new worktree are closed with notification",
         "Paths are canonicalized with vim.fn.resolve() to handle symlinks"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "core-4",
