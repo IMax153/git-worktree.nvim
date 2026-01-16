@@ -19,3 +19,15 @@ Started: 2026-01-16
 - Verified require('git-worktree') loads without error via nvim --headless
 - Files changed: lua/git-worktree/{init,config,types}.lua, plugin/git-worktree.lua
 - **Learnings**: vim.tbl_deep_extend merges configs, vim.validate checks types at runtime
+
+## Task - git-1
+- Created lua/git-worktree/git.lua with git command wrapper functions
+- Implemented worktree_list() returning stdout from `git worktree list --porcelain`
+- Implemented worktree_add(path, branch, opts) with create_branch support
+- Implemented worktree_remove(path, opts) with force option
+- Implemented is_dirty(path) checking `git -C <path> status --porcelain`
+- Implemented get_git_root() returning repo root from `git rev-parse --show-toplevel`
+- All functions use vim.system() synchronously via :wait()
+- All functions check exit codes and return errors on failure
+- Files changed: lua/git-worktree/git.lua
+- **Learnings**: vim.system() returns vim.SystemCompleted with code, stdout, stderr fields; use :wait() for sync execution

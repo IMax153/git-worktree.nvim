@@ -28,7 +28,7 @@
         "All commands use vim.system() for async execution",
         "All commands check exit codes and return errors on failure"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "core-1",
