@@ -42,3 +42,16 @@ Started: 2026-01-16
 - Tested with both normal branch and detached HEAD worktrees
 - Files changed: lua/git-worktree/worktree.lua, lua/git-worktree/init.lua
 - **Learnings**: Porcelain format is line-based with blank line separators; vim.fn.resolve canonicalizes paths for comparison
+
+## Task - core-2
+- Implemented create() API in lua/git-worktree/worktree.lua with async (callback) and sync modes
+- create() accepts CreateWorktreeOpts: branch (required), path, create_branch, switch
+- Prompts for path via vim.ui.input() if not provided, defaults to ../<branch-name> from git root
+- Returns Worktree object on success, nil + error on failure
+- Calls on_create hook if configured in setup()
+- Switches to new worktree by default (switch = true) via pcall to avoid circular dependency
+- Uses vim.fn.resolve() for path comparison to handle symlinks (/tmp -> /private/tmp on macOS)
+- Added create() to public API in lua/git-worktree/init.lua
+- Tested: existing branch, create_branch=true, on_create hook
+- Files changed: lua/git-worktree/worktree.lua, lua/git-worktree/init.lua
+- **Learnings**: vim.ui.input() requires async callback pattern; pcall protects against missing dependencies during development; symlink resolution critical for macOS /tmp paths

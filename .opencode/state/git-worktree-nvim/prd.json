@@ -60,7 +60,7 @@
         "Calls on_create hook if configured",
         "Switches to new worktree by default (switch = true)"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "core-3",
