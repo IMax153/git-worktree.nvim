@@ -105,7 +105,7 @@
         "Prevents deleting main worktree (returns error)",
         "Calls on_delete hook if configured"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "cmd-1",

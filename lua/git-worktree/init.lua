@@ -31,4 +31,12 @@ function M.switch(path)
   return worktree.switch(path)
 end
 
+---Delete a worktree
+---@param path string Path to the worktree to delete
+---@param opts? DeleteWorktreeOpts Options
+---@return boolean?, string? success, error
+function M.delete(path, opts)
+  return worktree.delete(path, opts)
+end
+
 return M

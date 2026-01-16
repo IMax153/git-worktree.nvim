@@ -81,3 +81,17 @@ Started: 2026-01-16
 - Uses vim.fn.resolve() throughout for symlink handling
 - Files: lua/git-worktree/worktree.lua, lua/git-worktree/init.lua
 - **Learnings**: vim.lsp.get_clients() returns all clients; stopping clients triggers auto-restart; vim.api.nvim_exec_autocmds for User events with data field
+
+## Task - core-5
+- Implemented delete() API in lua/git-worktree/worktree.lua
+- Validates path is valid worktree via list()
+- Prevents deleting current worktree (returns error)
+- Prevents deleting main/bare worktree (returns error)
+- Calls git.worktree_remove() with force option support
+- Calls on_delete hook with deleted worktree object
+- Returns (true, nil) on success, (nil, error_msg) on failure
+- Handles symlinks via vim.fn.resolve()
+- Added delete() to public API in lua/git-worktree/init.lua
+- Tested: normal delete, force delete of dirty worktree, prevent delete current, on_delete hook
+- Files: lua/git-worktree/worktree.lua, lua/git-worktree/init.lua
+- **Learnings**: Git worktree remove fails on dirty trees without --force; main worktree detection via is_bare field
