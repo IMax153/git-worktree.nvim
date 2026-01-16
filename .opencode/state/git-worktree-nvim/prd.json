@@ -160,7 +160,7 @@
         "Tab completion for paths after switch/delete subcommands",
         "Completion registered via nvim_create_user_command complete option"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "snacks-1",

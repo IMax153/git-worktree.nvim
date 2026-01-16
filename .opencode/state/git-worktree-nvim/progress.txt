@@ -140,3 +140,12 @@ Started: 2026-01-16
 - Git error format: "contains modified or untracked files, use --force to delete it"
 - Files: plugin/git-worktree.lua
 - **Learnings**: Git worktree remove error for dirty trees contains "modified" keyword; error message enhancement done in command layer not API layer
+
+## Task - cmd-5
+- Verified completion already implemented in plugin/git-worktree.lua from cmd-3
+- Subcommand completion: list, create, switch, delete, pick (lines 102-109)
+- Path completion for switch/delete: fetches worktree list via pcall, filters by arg_lead (lines 114-127)
+- Completion function registered via complete option in nvim_create_user_command (lines 92-131)
+- Tested: all subcommands complete with prefix filtering, paths complete for switch/delete, no completion for other subcommands
+- Files: plugin/git-worktree.lua (already complete from cmd-3)
+- **Learnings**: Completion function receives arg_lead for filtering; cmd_line parsing determines context (subcommand vs path); pcall protects against module load failures during completion
