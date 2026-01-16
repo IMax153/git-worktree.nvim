@@ -91,7 +91,7 @@
         "Returns true on success, false + error on failure",
         "Errors if path is not a valid worktree"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "core-5",

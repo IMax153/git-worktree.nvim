@@ -210,4 +210,86 @@ function M._create_worktree(opts, callback)
   return created_worktree, nil
 end
 
+---Switch to a different worktree
+---@param path string Path to the target worktree
+---@return boolean, string? success, error
+function M.switch(path)
+  local config = require('git-worktree.config')
+  local buffer = require('git-worktree.buffer')
+  
+  -- Validate that path is a valid worktree
+  local worktrees, list_err = M.list()
+  if list_err then
+    return false, list_err
+  end
+  
+  -- Resolve target path to handle symlinks
+  local resolved_target = vim.fn.resolve(path)
+  
+  local target_worktree = nil
+  local current_worktree = nil
+  
+  for _, wt in ipairs(worktrees) do
+    local resolved_wt_path = vim.fn.resolve(wt.path)
+    if resolved_wt_path == resolved_target then
+      target_worktree = wt
+    end
+    if wt.is_current then
+      current_worktree = wt
+    end
+  end
+  
+  if not target_worktree then
+    return false, "Path is not a valid worktree: " .. path
+  end
+  
+  -- Already in target worktree
+  if target_worktree.is_current then
+    return true, nil
+  end
+  
+  -- Save current worktree reference for hook
+  if not current_worktree then
+    return false, "Could not determine current worktree"
+  end
+  
+  -- Auto-save all modified buffers
+  buffer.save_all()
+  
+  -- Change directory to target worktree
+  local ok, chdir_err = pcall(vim.fn.chdir, target_worktree.path)
+  if not ok then
+    return false, "Failed to change directory: " .. tostring(chdir_err)
+  end
+  
+  -- Repoint buffers to new worktree paths
+  buffer.repoint(current_worktree.path, target_worktree.path)
+  
+  -- Restart LSP clients
+  -- Get all active LSP clients
+  local clients = vim.lsp.get_clients()
+  for _, client in ipairs(clients) do
+    -- Stop each client
+    client.stop()
+  end
+  
+  -- LSP clients will auto-restart when buffers are accessed
+  
+  -- Emit autocmd event
+  vim.api.nvim_exec_autocmds('User', {
+    pattern = 'GitWorktreeSwitched',
+    data = {
+      old = current_worktree,
+      new = target_worktree,
+    },
+  })
+  
+  -- Call on_switch hook
+  if config.options.hooks and config.options.hooks.on_switch then
+    config.options.hooks.on_switch(current_worktree, target_worktree)
+  end
+  
+  return true, nil
+end
+
 return M

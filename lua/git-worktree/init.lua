@@ -24,4 +24,11 @@ function M.create(opts, callback)
   return worktree.create(opts, callback)
 end
 
+---Switch to a different worktree
+---@param path string Path to the target worktree
+---@return boolean, string? success, error
+function M.switch(path)
+  return worktree.switch(path)
+end
+
 return M

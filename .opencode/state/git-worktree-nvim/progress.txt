@@ -67,3 +67,17 @@ Started: 2026-01-16
 - Notifies user when closing buffers for files not in new worktree
 - Files: lua/git-worktree/buffer.lua
 - **Learnings**: nvim_get_option_value() preferred over deprecated buf_get_option; vim.startswith() cleaner for path prefix checks
+
+## Task - core-4
+- Implemented switch() API in lua/git-worktree/worktree.lua
+- Validates target path is valid worktree via list()
+- Auto-saves modified buffers via buffer.save_all()
+- Changes cwd via vim.fn.chdir()
+- Repoints buffers from old to new worktree via buffer.repoint()
+- Restarts LSP clients by stopping all active clients (auto-restart on buffer access)
+- Emits User GitWorktreeSwitched autocmd with old/new worktree data
+- Calls on_switch hook with (old_worktree, new_worktree)
+- Returns (true, nil) on success, (false, error_msg) on failure
+- Uses vim.fn.resolve() throughout for symlink handling
+- Files: lua/git-worktree/worktree.lua, lua/git-worktree/init.lua
+- **Learnings**: vim.lsp.get_clients() returns all clients; stopping clients triggers auto-restart; vim.api.nvim_exec_autocmds for User events with data field
