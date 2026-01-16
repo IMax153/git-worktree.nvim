@@ -18,10 +18,89 @@ vim.api.nvim_create_user_command('Worktree', function(opts)
     end
 
     vim.notify(table.concat(lines, '\n'), vim.log.levels.INFO)
+  elseif subcommand == 'create' then
+    local branch = args[2]
+    local path = args[3]
+
+    if branch then
+      -- Branch provided: create immediately or prompt for path
+      local ok, result = require('git-worktree').create({
+        branch = branch,
+        path = path,
+      })
+      if not ok then
+        vim.notify('Failed to create worktree: ' .. (result or 'unknown error'), vim.log.levels.ERROR)
+      end
+    else
+      -- No args: prompt for branch first
+      vim.ui.input({ prompt = 'Branch name: ' }, function(input_branch)
+        if not input_branch or input_branch == '' then
+          return
+        end
+        -- Then create (will prompt for path if needed)
+        local ok, result = require('git-worktree').create({
+          branch = input_branch,
+        })
+        if not ok then
+          vim.notify('Failed to create worktree: ' .. (result or 'unknown error'), vim.log.levels.ERROR)
+        end
+      end)
+    end
+  elseif subcommand == 'switch' then
+    local path = args[2]
+
+    if not path then
+      vim.notify(':Worktree switch requires a path argument', vim.log.levels.ERROR)
+      return
+    end
+
+    local ok, err = require('git-worktree').switch(path)
+    if not ok then
+      vim.notify('Failed to switch worktree: ' .. (err or 'unknown error'), vim.log.levels.ERROR)
+    end
   else
     vim.notify('Unknown subcommand: ' .. (subcommand or '(none)'), vim.log.levels.ERROR)
   end
 end, {
   nargs = '*',
   desc = 'Manage git worktrees',
+  complete = function(arg_lead, cmd_line, _)
+    local args = vim.split(cmd_line, '%s+', { trimempty = true })
+    
+    -- Remove 'Worktree' from args
+    if args[1] == 'Worktree' then
+      table.remove(args, 1)
+    end
+
+    -- If we're completing the first argument (subcommand)
+    if #args == 0 or (#args == 1 and cmd_line:match('%s$') == nil) then
+      local subcommands = { 'list', 'create', 'switch', 'delete', 'pick' }
+      local matches = {}
+      for _, subcmd in ipairs(subcommands) do
+        if vim.startswith(subcmd, arg_lead) then
+          table.insert(matches, subcmd)
+        end
+      end
+      return matches
+    end
+
+    -- If we're completing arguments for switch/delete subcommands
+    local subcommand = args[1]
+    if subcommand == 'switch' or subcommand == 'delete' then
+      local ok, worktrees = pcall(require('git-worktree').list)
+      if not ok or not worktrees then
+        return {}
+      end
+
+      local matches = {}
+      for _, wt in ipairs(worktrees) do
+        if vim.startswith(wt.path, arg_lead) then
+          table.insert(matches, wt.path)
+        end
+      end
+      return matches
+    end
+
+    return {}
+  end,
 })

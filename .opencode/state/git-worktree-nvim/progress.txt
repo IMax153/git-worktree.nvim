@@ -105,3 +105,26 @@ Started: 2026-01-16
 - Tested: single worktree, multiple worktrees, current indicator placement
 - Files: plugin/git-worktree.lua
 - **Learnings**: User commands receive opts.args as string; vim.split with trimempty simplifies arg parsing
+## Task - cmd-2
+- Implemented :Worktree create subcommand in plugin/git-worktree.lua
+- Handles three input modes: branch only, branch+path, no args (prompts)
+- Delegates to require('git-worktree').create() which prompts for path if needed
+- Branch-only mode: passes branch to create(), which prompts for path via vim.ui.input()
+- No-args mode: prompts for branch via vim.ui.input(), then calls create() which prompts for path
+- Explicit path mode: passes both branch and path directly to create()
+- Error handling: displays errors via vim.notify() with ERROR level
+- Files: plugin/git-worktree.lua
+- **Learnings**: vim.ui.input() async callback pattern handles nested prompts; delegation to API layer keeps command handler thin
+
+## Task - cmd-3
+- Implemented :Worktree switch <path> subcommand in plugin/git-worktree.lua
+- Validates path argument is provided (error if missing)
+- Delegates to require('git-worktree').switch() API
+- Error handling via vim.notify() with ERROR level
+- Added tab completion function to nvim_create_user_command
+- Completion suggests subcommands (list, create, switch, delete, pick) when completing first arg
+- Completion suggests worktree paths when completing args for switch/delete subcommands
+- Uses vim.startswith() for filtering completions by arg_lead
+- Uses pcall to handle case where git-worktree module fails to load during completion
+- Files: plugin/git-worktree.lua
+- **Learnings**: nvim_create_user_command complete function receives arg_lead, cmd_line, cursor_pos; need to parse cmd_line to determine context; vim.fn.getcompletion() useful for testing completions
