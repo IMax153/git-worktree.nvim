@@ -1,5 +1,214 @@
----Snacks.nvim picker integration
+---Snacks.nvim picker integration and standalone worktree actions
 local M = {}
+
+local git = require("git-worktree.git")
+local worktree_mod = require("git-worktree.worktree")
+
+---Prompt for branch name and path, then create worktree
+---@param callback? fun(wt: Worktree?, err: string?) Called after creation
+local function prompt_create_worktree(callback)
+  -- First prompt: branch name
+  vim.ui.input({ prompt = "Branch name: " }, function(branch)
+    if not branch or branch == "" then
+      return
+    end
+
+    -- Get git root for default path
+    local git_root, root_err = git.get_git_root()
+    if root_err then
+      vim.notify("Failed to get git root: " .. root_err, vim.log.levels.ERROR)
+      return
+    end
+
+    local default_path = vim.fn.fnamemodify(git_root, ":h") .. "/" .. branch
+
+    -- Second prompt: path
+    vim.ui.input({ prompt = "Worktree path: ", default = default_path }, function(path)
+      if not path or path == "" then
+        return
+      end
+
+      -- Create worktree with callback
+      worktree_mod.create({ branch = branch, path = path, create_branch = true }, function(wt, err)
+        if err then
+          vim.notify("Failed to create worktree: " .. err, vim.log.levels.ERROR)
+          if callback then
+            callback(nil, err)
+          end
+          return
+        end
+
+        if wt then
+          vim.notify("Created worktree: " .. wt.path, vim.log.levels.INFO)
+        end
+
+        if callback then
+          callback(wt, nil)
+        end
+      end)
+    end)
+  end)
+end
+
+---Create worktree action for Snacks picker
+---Prompts for branch name, then path, creates worktree and switches to it
+---@param picker snacks.Picker
+local function create_worktree_action(picker)
+  prompt_create_worktree(function()
+    -- Close picker after successful creation (switch happens automatically)
+    picker:close()
+  end)
+end
+
+---Prompt for worktree selection and delete it
+---@param callback? fun(success: boolean, err: string?) Called after deletion
+local function prompt_delete_worktree(callback)
+  local worktrees, list_err = worktree_mod.list()
+  if list_err then
+    vim.notify("Failed to list worktrees: " .. list_err, vim.log.levels.ERROR)
+    return
+  end
+
+  if not worktrees or #worktrees == 0 then
+    vim.notify("No worktrees found", vim.log.levels.WARN)
+    return
+  end
+
+  -- Filter out current worktree and bare repository
+  local deletable = vim.tbl_filter(function(wt)
+    return not wt.is_current and not wt.is_bare
+  end, worktrees)
+
+  if #deletable == 0 then
+    vim.notify("No worktrees available to delete", vim.log.levels.WARN)
+    return
+  end
+
+  vim.ui.select(deletable, {
+    prompt = "Select worktree to delete:",
+    format_item = function(wt)
+      local dirty = git.is_dirty(wt.path) and " [dirty]" or ""
+      return string.format("%s (%s)%s", wt.branch or "(detached)", wt.path, dirty)
+    end,
+  }, function(wt)
+    if not wt then
+      return
+    end
+
+    -- Confirmation prompt
+    local confirm_msg = string.format("Delete worktree at %s?", wt.path)
+    vim.ui.select({ "Yes", "No" }, { prompt = confirm_msg }, function(choice)
+      if choice ~= "Yes" then
+        return
+      end
+
+      local success, err = worktree_mod.delete(wt.path)
+
+      if not success then
+        vim.notify("Failed to delete worktree: " .. (err or "unknown error"), vim.log.levels.ERROR)
+        if callback then
+          callback(false, err)
+        end
+        return
+      end
+
+      vim.notify("Deleted worktree: " .. wt.path, vim.log.levels.INFO)
+      if callback then
+        callback(true, nil)
+      end
+    end)
+  end)
+end
+
+---Prompt for worktree selection and switch to it
+---@param callback? fun(success: boolean, err: string?) Called after switch
+local function prompt_switch_worktree(callback)
+  local worktrees, list_err = worktree_mod.list()
+  if list_err then
+    vim.notify("Failed to list worktrees: " .. list_err, vim.log.levels.ERROR)
+    return
+  end
+
+  if not worktrees or #worktrees == 0 then
+    vim.notify("No worktrees found", vim.log.levels.WARN)
+    return
+  end
+
+  -- Filter out current worktree and bare repository
+  local switchable = vim.tbl_filter(function(wt)
+    return not wt.is_current and not wt.is_bare
+  end, worktrees)
+
+  if #switchable == 0 then
+    vim.notify("No other worktrees to switch to", vim.log.levels.WARN)
+    return
+  end
+
+  vim.ui.select(switchable, {
+    prompt = "Select worktree to switch to:",
+    format_item = function(wt)
+      local dirty = git.is_dirty(wt.path) and " [dirty]" or ""
+      return string.format("%s (%s)%s", wt.branch or "(detached)", wt.path, dirty)
+    end,
+  }, function(wt)
+    if not wt then
+      return
+    end
+
+    local success, err = worktree_mod.switch(wt.path)
+
+    if not success then
+      vim.notify("Failed to switch worktree: " .. (err or "unknown error"), vim.log.levels.ERROR)
+      if callback then
+        callback(false, err)
+      end
+      return
+    end
+
+    if callback then
+      callback(true, nil)
+    end
+  end)
+end
+
+---Delete worktree action for Snacks picker
+---Confirms deletion and removes the selected worktree
+---@param picker snacks.Picker
+---@param item snacks.picker.finder.Item
+local function delete_worktree_action(picker, item)
+  if not item or not item.worktree then
+    vim.notify("No worktree selected", vim.log.levels.WARN)
+    return
+  end
+
+  local wt = item.worktree
+
+  -- Prevent deleting current worktree
+  if wt.is_current then
+    vim.notify("Cannot delete current worktree. Switch to another worktree first.", vim.log.levels.ERROR)
+    return
+  end
+
+  -- Confirmation prompt
+  local confirm_msg = string.format("Delete worktree at %s?", wt.path)
+  vim.ui.select({ "Yes", "No" }, { prompt = confirm_msg }, function(choice)
+    if choice ~= "Yes" then
+      return
+    end
+
+    local success, err = worktree_mod.delete(wt.path)
+
+    if not success then
+      vim.notify("Failed to delete worktree: " .. (err or "unknown error"), vim.log.levels.ERROR)
+      return
+    end
+
+    vim.notify("Deleted worktree: " .. wt.path, vim.log.levels.INFO)
+
+    -- Refresh the picker
+    picker:find()
+  end)
+end
 
 ---Open Snacks picker for worktrees
 ---@param opts? table Options for the picker
@@ -12,7 +221,6 @@ function M.worktrees(opts)
   end
 
   local worktree = require("git-worktree.worktree")
-  local git = require("git-worktree.git")
 
   opts = opts or {}
 
@@ -83,9 +291,46 @@ function M.worktrees(opts)
       local branch = item.branch or "(detached)"
       return string.format("%s %-30s %s%s", indicator, branch, item.path, dirty)
     end,
+    actions = {
+      create_worktree = function(picker)
+        create_worktree_action(picker)
+      end,
+      delete_worktree = function(picker, item)
+        delete_worktree_action(picker, item)
+      end,
+    },
+    win = {
+      input = {
+        keys = {
+          ["<c-n>"] = "create_worktree",
+          ["<c-d>"] = "delete_worktree",
+        },
+      },
+    },
   }, opts)
 
   snacks.picker.pick(picker_opts)
+end
+
+---Create a new worktree interactively
+---Prompts for branch name and path using vim.ui.input
+---@param callback? fun(wt: Worktree?, err: string?) Called after creation
+function M.create_worktree(callback)
+  prompt_create_worktree(callback)
+end
+
+---Switch to a worktree interactively
+---Prompts for worktree selection using vim.ui.select
+---@param callback? fun(success: boolean, err: string?) Called after switch
+function M.switch_worktree(callback)
+  prompt_switch_worktree(callback)
+end
+
+---Delete a worktree interactively
+---Prompts for worktree selection and confirmation using vim.ui.select
+---@param callback? fun(success: boolean, err: string?) Called after deletion
+function M.delete_worktree(callback)
+  prompt_delete_worktree(callback)
 end
 
 return M

@@ -83,6 +83,8 @@ vim.api.nvim_create_user_command('Worktree', function(opts)
       end
       vim.notify(msg, vim.log.levels.ERROR)
     end
+  elseif subcommand == 'pick' then
+    require('git-worktree.snacks').worktrees()
   else
     vim.notify('Unknown subcommand: ' .. (subcommand or '(none)'), vim.log.levels.ERROR)
   end

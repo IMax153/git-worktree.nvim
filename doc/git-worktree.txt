@@ -1,0 +1,392 @@
+*git-worktree.txt*	Manage git worktrees from Neovim
+
+Author:   Maxwell Brown
+License:  MIT
+Requires: Neovim >= 0.11
+
+==============================================================================
+CONTENTS                                              *git-worktree-contents*
+
+  1. Introduction ................................. |git-worktree|
+  2. Requirements ................................. |git-worktree-requirements|
+  3. Commands ..................................... |:Worktree|
+  4. Lua API ...................................... |git-worktree-api|
+  5. Configuration ................................ |git-worktree-config|
+  6. Hooks ........................................ |git-worktree-hooks|
+  7. Snacks Integration ........................... |git-worktree-snacks|
+     - Picker ..................................... |git-worktree-snacks-picker|
+     - Standalone Actions ......................... |git-worktree-snacks-actions|
+     - Keymaps .................................... |git-worktree-snacks-keymaps|
+  8. Events ....................................... |git-worktree-events|
+
+==============================================================================
+INTRODUCTION                                                   *git-worktree*
+
+git-worktree.nvim provides a Lua API and commands for managing git worktrees
+directly from Neovim. It handles buffer repointing, LSP restart, and provides
+lifecycle hooks for custom integrations.
+
+Features:
+- List, create, switch, and delete worktrees
+- Automatic buffer repointing when switching
+- LSP client restart on worktree switch
+- Lifecycle hooks (on_create, on_switch, on_delete)
+- Optional Snacks.nvim picker integration
+- Health check via |:checkhealth|
+
+==============================================================================
+REQUIREMENTS                                      *git-worktree-requirements*
+
+- Neovim >= 0.11
+- git executable in PATH
+- (Optional) Snacks.nvim for picker integration
+
+Run |:checkhealth| git-worktree to verify your environment.
+
+==============================================================================
+COMMANDS                                                          *:Worktree*
+
+:Worktree list                                              *:Worktree-list*
+    List all worktrees in the repository. Current worktree is marked with *.
+
+:Worktree create [branch] [path]                          *:Worktree-create*
+    Create a new worktree. If branch is not provided, prompts interactively.
+    If path is not provided, prompts with default of `../<branch>`.
+
+    Example: >vim
+        :Worktree create feature-xyz
+        :Worktree create feature-xyz ../feature-xyz
+<
+:Worktree switch {path}                                   *:Worktree-switch*
+    Switch to the worktree at {path}. Saves all buffers, changes directory,
+    repoints buffer paths, and restarts LSP clients.
+
+    Example: >vim
+        :Worktree switch ../main
+<
+:Worktree delete {path} [--force]                         *:Worktree-delete*
+    Delete the worktree at {path}. Cannot delete current worktree.
+    Use --force or -f to delete worktrees with uncommitted changes.
+
+    Example: >vim
+        :Worktree delete ../feature-xyz
+        :Worktree delete ../feature-xyz --force
+<
+:Worktree pick                                              *:Worktree-pick*
+    Open Snacks picker for interactive worktree selection.
+    Requires Snacks.nvim to be installed.
+
+==============================================================================
+LUA API                                                    *git-worktree-api*
+
+                                                       *git-worktree.setup()*
+require('git-worktree').setup({opts})
+    Optional setup function. Plugin works without calling this.
+    See |git-worktree-config| for available options.
+
+                                                        *git-worktree.list()*
+require('git-worktree').list()
+    List all worktrees in the repository.
+
+    Returns: ~
+        {Worktree[]}  Array of worktree objects
+        {string?}     Error message if failed
+
+    Worktree object fields: ~
+        path        string   Absolute path to worktree
+        head        string   SHA-1 of HEAD commit
+        branch      string?  Branch name (nil if detached)
+        is_bare     boolean  Whether this is the bare repository
+        is_current  boolean  Whether this is current working directory
+        is_locked   boolean  Whether worktree is locked
+        is_prunable boolean  Whether worktree can be pruned
+        is_detached boolean  Whether HEAD is detached
+
+    Example: >lua
+        local worktrees, err = require('git-worktree').list()
+        if err then
+          vim.notify('Error: ' .. err)
+          return
+        end
+        for _, wt in ipairs(worktrees) do
+          print(wt.branch, wt.path)
+        end
+<
+                                                      *git-worktree.create()*
+require('git-worktree').create({opts}, {callback?})
+    Create a new worktree. Can be called synchronously or asynchronously.
+
+    Parameters: ~
+        {opts}      CreateWorktreeOpts (see below)
+        {callback?} function(worktree, error) for async mode
+
+    CreateWorktreeOpts: ~
+        branch         string   Branch name to checkout or create (required)
+        path           string?  Path for worktree (prompts if not provided)
+        create_branch  boolean? Create new branch (default: false)
+        switch         boolean? Switch to new worktree (default: true)
+
+    Returns (sync mode only): ~
+        {Worktree?}  Created worktree object
+        {string?}    Error message if failed
+
+    Example: >lua
+        -- Synchronous (path required)
+        local wt, err = require('git-worktree').create({
+          branch = 'feature-xyz',
+          path = '../feature-xyz',
+        })
+
+        -- Asynchronous (path can be prompted)
+        require('git-worktree').create({
+          branch = 'feature-xyz',
+        }, function(wt, err)
+          if err then
+            vim.notify('Error: ' .. err)
+          else
+            vim.notify('Created: ' .. wt.path)
+          end
+        end)
+<
+                                                      *git-worktree.switch()*
+require('git-worktree').switch({path})
+    Switch to a different worktree. Performs the following:
+    1. Saves all modified buffers
+    2. Changes working directory
+    3. Repoints buffer file paths to new worktree
+    4. Restarts LSP clients
+    5. Fires |GitWorktreeSwitched| autocmd
+    6. Calls on_switch hook if configured
+
+    Parameters: ~
+        {path}  string  Path to target worktree
+
+    Returns: ~
+        {boolean}  true if successful
+        {string?}  Error message if failed
+
+    Example: >lua
+        local ok, err = require('git-worktree').switch('../main')
+        if not ok then
+          vim.notify('Failed: ' .. err)
+        end
+<
+                                                      *git-worktree.delete()*
+require('git-worktree').delete({path}, {opts?})
+    Delete a worktree. Cannot delete current worktree.
+
+    Parameters: ~
+        {path}  string             Path to worktree to delete
+        {opts?} DeleteWorktreeOpts (see below)
+
+    DeleteWorktreeOpts: ~
+        force  boolean?  Force deletion even if dirty (default: false)
+
+    Returns: ~
+        {boolean?}  true if successful, nil if failed
+        {string?}   Error message if failed
+
+    Example: >lua
+        local ok, err = require('git-worktree').delete('../feature-xyz')
+        if not ok then
+          vim.notify('Failed: ' .. err)
+        end
+
+        -- Force delete dirty worktree
+        require('git-worktree').delete('../feature-xyz', { force = true })
+<
+==============================================================================
+CONFIGURATION                                           *git-worktree-config*
+
+Configuration is optional. The plugin works without calling setup().
+
+>lua
+    require('git-worktree').setup({
+      hooks = {
+        on_create = function(worktree)
+          -- Called after worktree is created
+        end,
+        on_switch = function(old_worktree, new_worktree)
+          -- Called after switching worktrees
+        end,
+        on_delete = function(worktree)
+          -- Called after worktree is deleted
+        end,
+      },
+    })
+<
+
+==============================================================================
+HOOKS                                                   *git-worktree-hooks*
+
+Hooks are callback functions called during worktree lifecycle events.
+
+                                                     *git-worktree-on_create*
+hooks.on_create ~
+    Called after a worktree is created.
+
+    Parameters: ~
+        {worktree}  Worktree  The created worktree object
+
+    Example: >lua
+        on_create = function(wt)
+          vim.notify('Created: ' .. wt.branch)
+        end
+<
+                                                     *git-worktree-on_switch*
+hooks.on_switch ~
+    Called after switching to a different worktree.
+
+    Parameters: ~
+        {old_worktree}  Worktree  The previous worktree
+        {new_worktree}  Worktree  The new current worktree
+
+    Example: >lua
+        on_switch = function(old, new)
+          vim.notify('Switched from ' .. old.branch .. ' to ' .. new.branch)
+        end
+<
+                                                     *git-worktree-on_delete*
+hooks.on_delete ~
+    Called after a worktree is deleted.
+
+    Parameters: ~
+        {worktree}  Worktree  The deleted worktree object
+
+    Example: >lua
+        on_delete = function(wt)
+          vim.notify('Deleted: ' .. wt.path)
+        end
+<
+==============================================================================
+SNACKS INTEGRATION                                      *git-worktree-snacks*
+
+The git-worktree.snacks module provides interactive functions for worktree
+operations. The action functions use vim.ui.input/vim.ui.select and do NOT
+require Snacks.nvim. Only the picker requires Snacks.nvim.
+
+------------------------------------------------------------------------------
+SNACKS PICKER                                    *git-worktree-snacks-picker*
+
+If Snacks.nvim is installed, you can use the picker integration:
+
+>lua
+    require('git-worktree.snacks').worktrees()
+<
+
+The picker displays:
+- Current worktree indicator (*)
+- Branch name
+- Worktree path
+- Dirty state indicator ([dirty])
+
+Picker keybindings: ~
+    <CR>     Switch to selected worktree
+    <C-n>    Create new worktree (prompts for branch/path)
+    <C-d>    Delete selected worktree (with confirmation)
+
+------------------------------------------------------------------------------
+STANDALONE ACTIONS                              *git-worktree-snacks-actions*
+
+These functions use vim.ui.input/vim.ui.select and do NOT require Snacks.nvim:
+
+                                         *git-worktree.snacks.create_worktree()*
+require('git-worktree.snacks').create_worktree({callback?})
+    Create a new worktree interactively. Prompts for branch name, then path.
+    Automatically switches to the new worktree after creation.
+
+    Parameters: ~
+        {callback?}  function(worktree, error)  Called after creation
+
+    Example: >lua
+        require('git-worktree.snacks').create_worktree()
+
+        -- With callback
+        require('git-worktree.snacks').create_worktree(function(wt, err)
+          if err then
+            vim.notify('Error: ' .. err)
+          end
+        end)
+<
+                                         *git-worktree.snacks.switch_worktree()*
+require('git-worktree.snacks').switch_worktree({callback?})
+    Switch to a worktree interactively. Shows a selection menu of available
+    worktrees (excludes current and bare repository).
+
+    Parameters: ~
+        {callback?}  function(success, error)  Called after switch
+
+    Example: >lua
+        require('git-worktree.snacks').switch_worktree()
+<
+                                         *git-worktree.snacks.delete_worktree()*
+require('git-worktree.snacks').delete_worktree({callback?})
+    Delete a worktree interactively. Shows a selection menu of deletable
+    worktrees, then confirms before deletion.
+
+    Parameters: ~
+        {callback?}  function(success, error)  Called after deletion
+
+    Example: >lua
+        require('git-worktree.snacks').delete_worktree()
+<
+------------------------------------------------------------------------------
+KEYMAPS                                          *git-worktree-snacks-keymaps*
+
+Example keymap configuration:
+
+>lua
+    -- With lazy.nvim
+    {
+      "imax153/git-worktree.nvim",
+      opts = {},
+      keys = {
+        { "<leader>gw", function() require("git-worktree.snacks").worktrees() end,
+          desc = "Git worktrees (picker)" },
+        { "<leader>gwc", function() require("git-worktree.snacks").create_worktree() end,
+          desc = "Create worktree" },
+        { "<leader>gws", function() require("git-worktree.snacks").switch_worktree() end,
+          desc = "Switch worktree" },
+        { "<leader>gwd", function() require("git-worktree.snacks").delete_worktree() end,
+          desc = "Delete worktree" },
+      },
+    }
+
+    -- Manual keymaps
+    vim.keymap.set("n", "<leader>gw", function()
+      require("git-worktree.snacks").worktrees()
+    end, { desc = "Git worktrees (picker)" })
+
+    vim.keymap.set("n", "<leader>gwc", function()
+      require("git-worktree.snacks").create_worktree()
+    end, { desc = "Create worktree" })
+
+    vim.keymap.set("n", "<leader>gws", function()
+      require("git-worktree.snacks").switch_worktree()
+    end, { desc = "Switch worktree" })
+
+    vim.keymap.set("n", "<leader>gwd", function()
+      require("git-worktree.snacks").delete_worktree()
+    end, { desc = "Delete worktree" })
+<
+
+==============================================================================
+EVENTS                                                 *git-worktree-events*
+
+                                                      *GitWorktreeSwitched*
+User GitWorktreeSwitched ~
+    Fired after switching worktrees. The event data contains old and new
+    worktree objects.
+
+    Example: >lua
+        vim.api.nvim_create_autocmd('User', {
+          pattern = 'GitWorktreeSwitched',
+          callback = function(args)
+            local old = args.data.old
+            local new = args.data.new
+            vim.notify('Switched to ' .. new.branch)
+          end,
+        })
+<
+==============================================================================
+vim:tw=78:ts=8:ft=help:norl:

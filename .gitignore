@@ -12,3 +12,7 @@ luac.out
 
 # Editor state
 .opencode/state/
+
+# Ralph
+.ralph
+.ralph-auto

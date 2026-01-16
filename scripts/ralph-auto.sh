@@ -127,54 +127,38 @@ has_changes() {
     ! git diff --quiet || ! git diff --cached --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]
 }
 
-# Filter stream-json output to show only relevant content
+# Filter opencode JSON output to show only relevant content
 stream_filter() {
     while IFS= read -r line; do
-        # Extract assistant text messages
-        if echo "${line}" | jq -e '.type == "assistant"' > /dev/null 2>&1; then
-            local text
-            text=$(echo "${line}" | jq -r '.message.content[]? | select(.type == "text") | .text // empty' 2>/dev/null)
-            if [ -n "${text}" ]; then
-                echo "${text}"
-            fi
+        local event_type
+        event_type=$(echo "${line}" | jq -r '.type // empty' 2>/dev/null)
 
-            # Show tool calls with details
-            local tool_info
-            tool_info=$(echo "${line}" | jq -r '
-                .message.content[]? | select(.type == "tool_use") |
-                .name as $name |
-                if $name == "Read" then
-                    "> Read: \(.input.file_path // "?")"
-                elif $name == "Write" then
-                    "> Write: \(.input.file_path // "?")"
-                elif $name == "Edit" then
-                    "> Edit: \(.input.file_path // "?")"
-                elif $name == "Glob" then
-                    "> Glob: \(.input.pattern // "?")"
-                elif $name == "Grep" then
-                    "> Grep: \(.input.pattern // "?") in \(.input.path // ".")"
-                elif $name == "Bash" then
-                    "> Bash: \(.input.command // "?" | .[0:80])"
-                elif $name == "Task" then
-                    "> Task: \(.input.description // "?")"
-                else
-                    "> \($name): \(.input | tostring | .[0:60])"
-                end
-            ' 2>/dev/null)
-            if [ -n "${tool_info}" ]; then
-                echo -e "${BLUE}${tool_info}${NC}"
-            fi
-        fi
-
-        # Show final result
-        if echo "${line}" | jq -e '.type == "result"' > /dev/null 2>&1; then
-            local result
-            result=$(echo "${line}" | jq -r '.result // empty' 2>/dev/null)
-            if [ -n "${result}" ]; then
-                echo ""
-                echo "${result}"
-            fi
-        fi
+        case "${event_type}" in
+            "text")
+                # Show text output from the assistant
+                local text
+                text=$(echo "${line}" | jq -r '.part.text // empty' 2>/dev/null)
+                if [ -n "${text}" ]; then
+                    echo "${text}"
+                fi
+                ;;
+            "tool_start")
+                # Show tool invocations
+                local tool_name
+                tool_name=$(echo "${line}" | jq -r '.part.tool // empty' 2>/dev/null)
+                if [ -n "${tool_name}" ]; then
+                    echo -e "${BLUE}> ${tool_name}${NC}"
+                fi
+                ;;
+            "step_finish")
+                # Show completion reason
+                local reason
+                reason=$(echo "${line}" | jq -r '.part.reason // empty' 2>/dev/null)
+                if [ "${reason}" = "stop" ]; then
+                    echo ""
+                fi
+                ;;
+        esac
     done
 }
 
@@ -335,15 +319,14 @@ $(cat "${PROGRESS_FILE}")
     echo "${prompt}"
 }
 
-# Extract task description from output (handles stream-json format)
+# Extract task description from output (handles opencode JSON format)
 extract_task_description() {
     local output_file="${1}"
     local desc=""
 
-    # The output file is in stream-json format (one JSON object per line)
-    # Extract text content from assistant messages and find TASK_COMPLETE:
+    # Extract text content from opencode JSON and find TASK_COMPLETE:
     desc=$(cat "${output_file}" | \
-        jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text // empty' 2>/dev/null | \
+        jq -r 'select(.type == "text") | .part.text // empty' 2>/dev/null | \
         grep "TASK_COMPLETE:" | \
         head -1 | \
         sed 's/.*TASK_COMPLETE:[[:space:]]*//')
@@ -376,7 +359,8 @@ run_iteration() {
     echo ""  # Blank line before agent output
 
     # Run agent with JSON output, filter for readability
-    if cat "${prompt_file}" | ${AGENT_CMD} 2>&1 | tee "${output_file}" | stream_filter; then
+    # stdout (JSON) goes to tee and filter, stderr suppressed
+    if cat "${prompt_file}" | ${AGENT_CMD} 2>/dev/null | tee "${output_file}" | stream_filter; then
         echo ""  # Blank line after agent output
         log "SUCCESS" "Agent completed iteration ${iteration}"
     else
@@ -384,10 +368,10 @@ run_iteration() {
         log "WARN" "Agent exited with non-zero status"
     fi
 
-    # Extract only assistant text content from stream-json (excludes prompt)
+    # Extract only text content from opencode JSON output
     local assistant_text
     assistant_text=$(cat "${output_file}" | \
-        jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text // empty' 2>/dev/null)
+        jq -r 'select(.type == "text") | .part.text // empty' 2>/dev/null)
 
     # Check if agent signaled nothing left to do (only in assistant output, not prompt)
     if echo "${assistant_text}" | grep -q "${COMPLETE_MARKER}"; then

@@ -6,15 +6,33 @@ description: Create a new spec file for the Ralph autonomous loop
 
 Create a new spec file in the `specs/` directory for the Ralph autonomous loop.
 
+## Usage
+
+```
+/spec [description]
+```
+
+- `description` (optional) - High-level goal of the spec
+
 ## Instructions
 
-Guide the user through creating a well-structured spec by gathering:
+### If description is provided
 
-1. **Title** - A clear, descriptive title (e.g., "Add unit tests for git module")
-2. **Filename** - A kebab-case filename without extension (e.g., "unit-tests-git")
-3. **Overview** - Brief description of what this spec accomplishes (1-3 sentences)
-4. **Requirements** - Specific requirements that must be implemented
-5. **Acceptance Criteria** - Criteria that must be met for completion
+Generate all spec details from the description:
+
+1. **Title** - Derive a clear, descriptive title from the goal
+2. **Filename** - Generate kebab-case filename from the title (e.g., "Add unit tests for git module" → "unit-tests-git")
+3. **Overview** - Expand the goal into 1-3 sentences
+4. **Requirements** - Infer specific requirements needed to accomplish the goal
+5. **Acceptance Criteria** - Derive criteria that define completion
+
+**Do NOT ask for user input.** Generate everything autonomously.
+
+### If description is NOT provided
+
+Ask the user a single question: "What is the high-level goal of this spec?"
+
+Then generate all details from their response as described above.
 
 ## Output
 
