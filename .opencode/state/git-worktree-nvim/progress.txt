@@ -31,3 +31,14 @@ Started: 2026-01-16
 - All functions check exit codes and return errors on failure
 - Files changed: lua/git-worktree/git.lua
 - **Learnings**: vim.system() returns vim.SystemCompleted with code, stdout, stderr fields; use :wait() for sync execution
+
+## Task - core-1
+- Created lua/git-worktree/worktree.lua with parse() and list() functions
+- parse() parses `git worktree list --porcelain` output into Worktree objects
+- Handles all porcelain fields: worktree, HEAD, branch, detached, bare, locked, prunable
+- branch field extracts name from refs/heads/X format, nil for detached HEAD
+- is_current determined by comparing resolved paths (vim.fn.resolve) to handle symlinks
+- Added list() function to init.lua that delegates to worktree.list()
+- Tested with both normal branch and detached HEAD worktrees
+- Files changed: lua/git-worktree/worktree.lua, lua/git-worktree/init.lua
+- **Learnings**: Porcelain format is line-based with blank line separators; vim.fn.resolve canonicalizes paths for comparison

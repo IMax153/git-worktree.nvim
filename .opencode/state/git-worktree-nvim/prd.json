@@ -44,7 +44,7 @@
         "require('git-worktree').list() returns array of Worktree objects",
         "is_current is true for worktree matching vim.fn.getcwd()"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "core-2",
