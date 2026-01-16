@@ -95,3 +95,13 @@ Started: 2026-01-16
 - Tested: normal delete, force delete of dirty worktree, prevent delete current, on_delete hook
 - Files: lua/git-worktree/worktree.lua, lua/git-worktree/init.lua
 - **Learnings**: Git worktree remove fails on dirty trees without --force; main worktree detection via is_bare field
+
+## Task - cmd-1
+- Implemented :Worktree list subcommand in plugin/git-worktree.lua
+- Parses subcommand from opts.args via vim.split()
+- Displays formatted list: current indicator (*), branch name (30 chars), path
+- Handles detached HEAD case: shows "(detached HEAD)" when branch is nil
+- Uses vim.notify() for output display
+- Tested: single worktree, multiple worktrees, current indicator placement
+- Files: plugin/git-worktree.lua
+- **Learnings**: User commands receive opts.args as string; vim.split with trimempty simplifies arg parsing

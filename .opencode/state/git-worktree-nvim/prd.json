@@ -116,7 +116,7 @@
         "Output shows path, branch, and current indicator",
         "Output is formatted for readability"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "cmd-2",
