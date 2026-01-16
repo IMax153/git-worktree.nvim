@@ -128,7 +128,7 @@
         ":Worktree create (no args) prompts for branch and path",
         "Prompts use vim.ui.input()"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "cmd-3",
@@ -149,7 +149,7 @@
         "Tab completion suggests existing worktree paths",
         "Errors clearly if worktree is dirty (suggests --force)"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "cmd-5",

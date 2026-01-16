@@ -58,6 +58,31 @@ vim.api.nvim_create_user_command('Worktree', function(opts)
     if not ok then
       vim.notify('Failed to switch worktree: ' .. (err or 'unknown error'), vim.log.levels.ERROR)
     end
+  elseif subcommand == 'delete' then
+    local path = args[2]
+
+    if not path then
+      vim.notify(':Worktree delete requires a path argument', vim.log.levels.ERROR)
+      return
+    end
+
+    local force = false
+    for i = 3, #args do
+      if args[i] == '--force' or args[i] == '-f' then
+        force = true
+        break
+      end
+    end
+
+    local ok, err = require('git-worktree').delete(path, { force = force })
+    if not ok then
+      local msg = 'Failed to delete worktree: ' .. (err or 'unknown error')
+      -- Check if error mentions dirty/modified files
+      if err and err:match('modified') or err and err:match('dirty') then
+        msg = msg .. '\nUse --force to delete anyway'
+      end
+      vim.notify(msg, vim.log.levels.ERROR)
+    end
   else
     vim.notify('Unknown subcommand: ' .. (subcommand or '(none)'), vim.log.levels.ERROR)
   end

@@ -128,3 +128,15 @@ Started: 2026-01-16
 - Uses pcall to handle case where git-worktree module fails to load during completion
 - Files: plugin/git-worktree.lua
 - **Learnings**: nvim_create_user_command complete function receives arg_lead, cmd_line, cursor_pos; need to parse cmd_line to determine context; vim.fn.getcompletion() useful for testing completions
+
+## Task - cmd-4
+- Implemented :Worktree delete <path> subcommand in plugin/git-worktree.lua
+- Validates path argument is provided (error if missing)
+- Parses --force/-f flag from args[3] onwards
+- Delegates to require('git-worktree').delete(path, { force = force })
+- Error detection: checks if error contains "modified" or "dirty" keywords
+- Suggests "--force to delete anyway" when dirty worktree detected
+- Tab completion for paths already implemented via shared completion function
+- Git error format: "contains modified or untracked files, use --force to delete it"
+- Files: plugin/git-worktree.lua
+- **Learnings**: Git worktree remove error for dirty trees contains "modified" keyword; error message enhancement done in command layer not API layer
