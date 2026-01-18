@@ -2,21 +2,84 @@
 
 # Ralph Auto Loop - Autonomous AI coding agent that implements specs
 #
-# This script automatically implements everything in the specs/ directory:
-# 1. Read all actionable specs from specs/ folder
-# 2. Read context from context/ folder for best practices
-# 3. Select a high priority task from the specs
-# 4. Implement it
-# 5. Update the spec (mark issues resolved, etc.)
-# 6. Repeat until all specs are fully implemented
+# This script runs an autonomous agent to implement a specific task.
+# A focus prompt is REQUIRED - the agent will only do what you ask.
 #
-# Usage: ./scripts/ralph-auto.sh
+# Usage: ./scripts/ralph-auto.sh <focus prompt> [options]
 #
-# The loop continues until OpenCode outputs "NOTHING_LEFT_TO_DO"
+# Options:
+#   --max-iterations <n>     Stop after n iterations (default: unlimited)
+#
+# Examples:
+#   ./scripts/ralph-auto.sh "Fix the authentication bug in login flow"
+#   ./scripts/ralph-auto.sh "Implement the exchange rate sync feature" --max-iterations 5
+#
+# The loop continues until the task is complete (TASK_COMPLETE signal)
 # COMMITS ARE HANDLED BY THIS SCRIPT, NOT THE AGENT.
 
 set -e
 set -o pipefail  # Propagate exit status through pipelines (important for tee)
+
+# Parse arguments
+FOCUS_PROMPT=""
+MAX_ITERATIONS=0  # 0 means unlimited
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --max-iterations)
+            if [[ -n "$2" && "$2" =~ ^[0-9]+$ ]]; then
+                MAX_ITERATIONS="$2"
+                shift 2
+            else
+                echo "Error: --max-iterations requires a positive integer"
+                exit 1
+            fi
+            ;;
+        --help|-h)
+            echo "Usage: ./scripts/ralph-auto.sh <focus prompt> [options]"
+            echo ""
+            echo "A focus prompt is REQUIRED. The agent will only do what you ask."
+            echo ""
+            echo "Options:"
+            echo "  --max-iterations <n>     Stop after n iterations (default: unlimited)"
+            echo "  --help, -h               Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  ./scripts/ralph-auto.sh \"Fix the authentication bug\""
+            echo "  ./scripts/ralph-auto.sh \"Implement exchange rate sync\" --max-iterations 5"
+            exit 0
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+        *)
+            # Positional argument - treat as focus prompt
+            if [[ -z "$FOCUS_PROMPT" ]]; then
+                FOCUS_PROMPT="$1"
+            else
+                echo "Error: Multiple focus prompts provided"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Focus prompt is required
+if [[ -z "$FOCUS_PROMPT" ]]; then
+    echo "Error: A focus prompt is required"
+    echo ""
+    echo "Usage: ./scripts/ralph-auto.sh <focus prompt> [options]"
+    echo ""
+    echo "Examples:"
+    echo "  ./scripts/ralph-auto.sh \"Fix the authentication bug\""
+    echo "  ./scripts/ralph-auto.sh \"Implement exchange rate sync\""
+    echo ""
+    echo "Use --help for more information"
+    exit 1
+fi
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,16 +96,44 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Cleanup function - removes output directory on exit
+# Track child processes for cleanup
+CHILD_PIDS=""
+
+# Cleanup function - kills children and removes output directory
 cleanup() {
+    # Kill any tracked child processes
+    if [ -n "$CHILD_PIDS" ]; then
+        for pid in $CHILD_PIDS; do
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -TERM "$pid" 2>/dev/null || true
+                sleep 0.5
+                if kill -0 "$pid" 2>/dev/null; then
+                    kill -9 "$pid" 2>/dev/null || true
+                fi
+            fi
+        done
+    fi
+
+    # Also kill any child processes of this script
+    pkill -P $$ 2>/dev/null || true
+
     if [ -d "${OUTPUT_DIR}" ]; then
         rm -rf "${OUTPUT_DIR}"
         echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} Cleaned up ${OUTPUT_DIR}"
     fi
 }
 
-# Set trap to clean up on exit (normal exit, errors, or signals)
+# Signal handler for graceful shutdown
+handle_signal() {
+    echo ""
+    echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} Received interrupt signal, shutting down..."
+    cleanup
+    exit 130
+}
+
+# Set traps for cleanup on exit and signals
 trap cleanup EXIT
+trap handle_signal INT TERM
 
 # Create output directory for logs
 mkdir -p "${OUTPUT_DIR}"
@@ -282,11 +373,14 @@ build_prompt() {
     local iteration="${1}"
     local ci_errors=""
     local progress_content=""
+    local focus_section=""
 
     if [ -f "${OUTPUT_DIR}/ci_errors.txt" ]; then
         ci_errors="## Previous Iteration Errors
 
-$(cat "${OUTPUT_DIR}/ci_errors.txt")
+**CI checks failed in the previous iteration. You MUST fix these errors.**
+
+Read the error details from: \`${OUTPUT_DIR}/ci_errors.txt\`
 "
     fi
 
@@ -298,6 +392,17 @@ $(cat "${PROGRESS_FILE}")
 \`\`\`
 "
     fi
+
+    # Build focus section (always present since focus prompt is required)
+    focus_section="## FOCUS MODE (User-Specified)
+
+**The user has specified that you should ONLY work on the following task:**
+
+> ${FOCUS_PROMPT}
+
+Work exclusively on this task. When the task is complete, signal TASK_COMPLETE. Do NOT select other tasks from specs - only do what is specified above.
+
+"
 
     # Get list of specs and context files
     local specs_list
@@ -315,6 +420,7 @@ $(cat "${PROGRESS_FILE}")
     prompt="${prompt//\{\{ITERATION\}\}/${iteration}}"
     prompt="${prompt//\{\{CI_ERRORS\}\}/${ci_errors}}"
     prompt="${prompt//\{\{PROGRESS\}\}/${progress_content}}"
+    prompt="${prompt//\{\{FOCUS\}\}/${focus_section}}"
 
     echo "${prompt}"
 }
@@ -354,18 +460,34 @@ run_iteration() {
     local prompt_file="${OUTPUT_DIR}/iteration_${iteration}_prompt.md"
     echo "${prompt}" > "${prompt_file}"
 
+    # Log prompt details
+    local prompt_lines
+    prompt_lines=$(echo "${prompt}" | wc -l | tr -d ' ')
+    local has_ci_errors="no"
+    if [ -f "${OUTPUT_DIR}/ci_errors.txt" ]; then
+        has_ci_errors="yes"
+    fi
+    log "INFO" "Prompt: ${prompt_lines} lines, CI errors: ${has_ci_errors}"
+    log "INFO" "Prompt file: ${prompt_file}"
+
     # Run the agent
     log "INFO" "Running OpenCode agent..."
     echo ""  # Blank line before agent output
 
     # Run agent with JSON output, filter for readability
-    # stdout (JSON) goes to tee and filter, stderr suppressed
+    # Run synchronously - signal handler will kill child processes on Ctrl+C
+    local agent_exit_code=0
     if cat "${prompt_file}" | ${AGENT_CMD} 2>/dev/null | tee "${output_file}" | stream_filter; then
         echo ""  # Blank line after agent output
         log "SUCCESS" "Agent completed iteration ${iteration}"
     else
+        agent_exit_code=$?
         echo ""
-        log "WARN" "Agent exited with non-zero status"
+        if [ $agent_exit_code -eq 130 ] || [ $agent_exit_code -eq 143 ]; then
+            log "INFO" "Agent interrupted by user"
+            return 1
+        fi
+        log "WARN" "Agent exited with non-zero status (${agent_exit_code})"
     fi
 
     # Extract only text content from opencode JSON output
@@ -439,6 +561,11 @@ main() {
     log "INFO" "Starting Ralph Auto Loop"
     log "INFO" "=========================================="
 
+    log "INFO" "Focus: ${FOCUS_PROMPT}"
+    if [ "${MAX_ITERATIONS}" -gt 0 ]; then
+        log "INFO" "Max iterations: ${MAX_ITERATIONS}"
+    fi
+
     check_prerequisites
 
     local start_time
@@ -460,12 +587,22 @@ main() {
     while true; do
         log "INFO" "------------------------------------------"
         log "INFO" "ITERATION ${iteration}"
+        if [ "${MAX_ITERATIONS}" -gt 0 ]; then
+            log "INFO" "(max: ${MAX_ITERATIONS})"
+        fi
+        log "INFO" "Focus: ${FOCUS_PROMPT}"
         log "INFO" "------------------------------------------"
 
         # Run the agent
         if run_iteration "${iteration}"; then
             log "SUCCESS" "Nothing left to do!"
             completed=true
+            break
+        fi
+
+        # Check max iterations
+        if [ "${MAX_ITERATIONS}" -gt 0 ] && [ "${iteration}" -ge "${MAX_ITERATIONS}" ]; then
+            log "WARN" "Reached max iterations (${MAX_ITERATIONS}) - stopping"
             break
         fi
 
