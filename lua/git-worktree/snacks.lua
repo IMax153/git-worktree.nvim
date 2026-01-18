@@ -95,7 +95,8 @@ local function prompt_delete_worktree(callback)
       return
     end
 
-    -- Confirmation prompt local confirm_msg = string.format("Delete worktree at %s?", wt.path)
+    -- Confirmation prompt
+    local confirm_msg = string.format("Delete worktree at %s?", wt.path)
     vim.ui.select({ "Yes", "No" }, { prompt = confirm_msg }, function(choice)
       if choice ~= "Yes" then
         return

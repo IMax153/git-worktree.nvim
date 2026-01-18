@@ -31,6 +31,7 @@ Use these files as reference when implementing tasks. Read relevant specs before
 3. **CI MUST BE GREEN**: Your code MUST pass `nix develop --command selene lua/` and `nix develop --command stylua --check lua/` before signaling completion.
 4. **ONE TASK PER ITERATION**: Complete one task, signal completion, then STOP.
 5. **UPDATE SPECS**: Update spec files to mark tasks complete, add new tasks, or track progress.
+6. **REMOVE COMPLETED SPECS**: When a spec is fully complete (all tasks done, status marked complete), delete the spec file.
 
 ## Signals
 
@@ -97,7 +98,7 @@ Before signaling TASK_COMPLETE:
 3. **Select a task** - choose one task to work on within the focus topic
 4. **Implement** - follow patterns from specs and existing code
 5. **Verify CI** - run `nix develop --command selene lua/` and `nix develop --command stylua --check lua/`
-6. **Update spec** - mark the task complete, add new tasks if discovered
+6. **Update spec** - mark the task complete, add new tasks if discovered. If spec is fully complete, delete it.
 7. **Signal** - output `TASK_COMPLETE: <description>` or `NOTHING_LEFT_TO_DO` if all done
 8. **STOP** - do not continue
 

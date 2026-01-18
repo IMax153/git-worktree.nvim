@@ -80,16 +80,53 @@ function M.is_dirty(path)
   return result.stdout ~= nil and result.stdout ~= ""
 end
 
+---Check if the current repository is a bare repository
+---@return boolean
+function M.is_bare_repository()
+  local result = exec({ "rev-parse", "--is-bare-repository" })
+  if result.code ~= 0 then
+    return false
+  end
+  local output = result.stdout:gsub("%s+$", "")
+  return output == "true"
+end
+
+---Get the common git directory (works in both bare and non-bare repos)
+---@return string?, string? path, error
+function M.get_git_common_dir()
+  local result = exec({ "rev-parse", "--git-common-dir" })
+  if result.code ~= 0 then
+    return nil, result.stderr or "Failed to get git common dir"
+  end
+  local path = result.stdout:gsub("%s+$", "")
+  -- Make path absolute if it's relative
+  if not path:match("^/") then
+    local cwd = vim.fn.getcwd()
+    path = cwd .. "/" .. path
+  end
+  -- Normalize path (resolve . and ..)
+  path = vim.fn.fnamemodify(path, ":p"):gsub("/$", "")
+  return path, nil
+end
+
 ---Get the git repository root
+---For non-bare repos: returns the work tree root (--show-toplevel)
+---For bare repos: returns the git directory (--git-common-dir)
 ---@return string?, string? path, error
 function M.get_git_root()
   local result = exec({ "rev-parse", "--show-toplevel" })
-  if result.code ~= 0 then
-    return nil, result.stderr or "Not in a git repository"
+  if result.code == 0 then
+    -- Normal repo - return work tree root
+    local path = result.stdout:gsub("%s+$", "")
+    return path, nil
   end
-  -- Trim trailing newline
-  local path = result.stdout:gsub("%s+$", "")
-  return path, nil
+
+  -- Check if we're in a bare repo
+  if M.is_bare_repository() then
+    return M.get_git_common_dir()
+  end
+
+  return nil, result.stderr or "Not in a git repository"
 end
 
 return M
