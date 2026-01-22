@@ -247,10 +247,7 @@ function M.worktrees(opts)
       }
 
       -- Build text for searching/filtering
-      item.text = vim.tbl_keys({
-        [wt.path] = true,
-        [wt.branch or "detached"] = true,
-      })
+      item.text = wt.path .. " " .. (wt.branch or "detached")
 
       table.insert(items, item)
     end
